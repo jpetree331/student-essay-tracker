@@ -1,0 +1,137 @@
+================================================================================
+PHASE 7 — PROGRESS COMPARISON (SCIENCE WRITING TRACKER)
+Review, testing, bugfixes, and feature summary
+Generated: 2026-03-20
+================================================================================
+
+1. SCOPE
+--------
+Phase 7 adds an additive “Progress Comparison” workflow: teachers compare 2–6
+chronological writing entries for one student, run an AI growth analysis via
+Claude (Sonnet 4.6), view a narrative results panel, optionally save the report
+to the database, export a printable HTML report, and reopen saved reports from
+chips on the student record.
+
+
+2. WHAT WAS ADDED (ARTIFACTS)
+-----------------------------
+Backend
+  • POST /api/compare-progress
+      - Validates student_id, student_name, 2–6 entries, unique entry_ids,
+        ownership (entries belong to student), chronological order (date, then
+        entry_id for same calendar day), non-empty writing_sample.
+      - Calls Anthropic Messages API with a fixed system prompt and structured
+        user message (tags + samples).
+      - Parses model output with lib/claudeJson.js (fenced JSON + fallback).
+      - Default model: claude-sonnet-4-6 (override: ANTHROPIC_COMPARE_MODEL).
+      - Returns: comparison, student_id, entry_ids_compared, generated_at,
+        model_used.
+
+  • POST /api/comparisons
+      - Persists one row in comparison_reports (student_id, entry_ids[], report_json).
+
+  • GET /api/students/:id/comparisons
+      - Lists saved reports for a student (ordered by generated_at DESC).
+      - Route registered before GET /api/students/:id so Express matches correctly.
+
+  • server.js — mounts compare-progress and comparisons routers.
+
+  • routes/analyzeWriting.js — refactored to use shared lib/claudeJson.js
+      (behavior unchanged; single JSON parse implementation).
+
+Database
+  • Table comparison_reports (see schema.sql and db/migration_007_comparison_reports.sql):
+      id SERIAL, student_id FK, entry_ids INTEGER[], report_json JSONB,
+      generated_at TIMESTAMPTZ DEFAULT NOW().
+  • Index idx_comparison_reports_student (student_id, generated_at DESC).
+
+Frontend
+  • api/client.js — compareProgress, getStudentComparisons, saveComparison.
+
+  • StudentRecordHeader.jsx — “Compare Progress” when student has ≥2 entries
+      (hidden during active comparison flow as wired in StudentRecordView).
+
+  • StudentRecordView.jsx — selection mode banner, generate/cancel, loading
+      carousel, error + retry, results panel, saved-comparison chips, save/export.
+
+  • EntryCard.jsx — optional compare checkbox + blue selection ring.
+
+  • ProgressComparisonPanel.jsx — loading UI, growth summary, conference script
+      + copy, growth timeline, gaps, entry table, IEP callout, save/export.
+
+  • lib/comparisonReportHtml.js — printable report (sections per spec; page
+      break before student-facing conference script).
+
+Shared
+  • lib/claudeJson.js — parseModelJson() for Claude text → JSON.
+
+
+3. TESTING PERFORMED
+--------------------
+Automated (no database, no Anthropic API)
+  • node scripts/phase6-parse-selftest.js  — exercises lib/claudeJson.js
+  • node scripts/phase7-selftest.js        — JSON parse + chronological-order logic
+  • npm run build (frontend)               — Vite production build succeeds
+
+Root package.json includes:
+  • npm run test:self  → runs phase6 + phase7 self-tests (run from API repo root:
+    e:\git\EssayOrganizer, not frontend/).
+
+Not run in this review (environment-dependent)
+  • End-to-end against PostgreSQL + live Claude API (requires DATABASE_URL,
+    ANTHROPIC_API_KEY, migrated DB).
+
+
+4. BUGS FOUND & FIXES APPLIED
+-----------------------------
+A) Saved comparison chips — date handling
+   Issue: label logic assumed date_submitted was always a string; calling
+   .slice() on a Date object would throw at runtime in edge cases.
+   Fix: Normalize with toYmd() (Date → ISO date, else string slice) in
+   ProgressComparisonPanel.jsx (SavedComparisonChips).
+
+B) Loading a saved report — report_json shape
+   Issue: If report_json were ever returned as a string, the UI would break.
+   Fix: In loadSavedComparison (StudentRecordView.jsx), JSON.parse when typeof
+   string; on failure fall back to {}.
+
+C) POST /api/comparisons validation
+   Issue: Arrays could pass typeof "object"; duplicate entry_ids were confusing.
+   Fix: Reject Array.isArray(report_json); require plain object. Reject duplicate
+   entry_ids explicitly (routes/comparisons.js).
+
+D) Duplicate saves in the UI
+   Issue: “Save this comparison” could POST repeatedly for the same generated
+   report, creating duplicate DB rows. Reopened saved reports could also be
+   saved again as duplicates.
+   Fix: Disable save when model_used === 'saved' (label: “Already saved to
+   record”) and after a successful save (saveState === 'saved') for newly
+   generated reports (ProgressComparisonPanel.jsx).
+
+E) Drift between Phase 6 self-test and production parser
+   Issue: scripts/phase6-parse-selftest.js duplicated parse logic instead of
+   testing lib/claudeJson.js.
+   Fix: phase6-parse-selftest now requires ../lib/claudeJson.js.
+
+
+5. REMAINING RISKS / FOLLOW-UPS
+--------------------------------
+  • Model output that is valid JSON but missing expected fields is coerced by
+    normalizeComparison() on the server; the UI may show empty sections.
+  • Full E2E test with real DB + API keys is recommended before classroom use.
+  • Ensure migration_007_comparison_reports.sql has been applied on every
+    deployment database.
+
+
+6. QUICK COMMANDS
+-----------------
+  cd e:\git\EssayOrganizer
+  npm run test:self
+  psql $DATABASE_URL -f db/migration_007_comparison_reports.sql   # if needed
+
+  cd frontend
+  npm run build
+
+================================================================================
+END OF REPORT
+================================================================================

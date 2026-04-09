@@ -1,0 +1,73 @@
+Science Writing Tracker — Phase 6 Report (LLM Auto-Tagging)
+===========================================================
+Date: 2026-03-20
+
+What was added (summary)
+------------------------
+Phase 6 adds an optional Anthropic Claude–powered pipeline to suggest the six
+writing-move booleans (claim, evidence, explanation, source named, incomplete,
+AI flag) from a student writing sample. Teachers always review (single-entry
+flow) or can batch-apply (Data tab) before correcting data on individual
+entries. Nothing from the LLM is persisted until the normal writing_tags /
+entry save paths run.
+
+Backend
+-------
+- Dependency: @anthropic-ai/sdk (root package.json).
+- routes/analyzeWriting.js mounted at /api/analyze-writing:
+  - POST / — body: writing_sample (≥50 chars), optional assignment_context.
+    Model: claude-haiku-4-5-20251001. Returns suggestions (booleans + per-tag
+    reasoning + overall_note), model_used, analyzed_at.
+  - GET /untagged-entries — entries with no writing_tags row and sample ≥50
+    chars; includes assignment_context for batch.
+  - GET /test — only when NODE_ENV !== "production"; fixed snippet to verify
+    API wiring (remove or ensure production NODE_ENV before deploy).
+- server.js registers the router.
+- .env.example documents ANTHROPIC_API_KEY.
+- README.md documents optional key, test route, and usage.
+
+Frontend
+--------
+- api/client.js: analyzeWriting(), getUntaggedEntriesForAnalysis().
+- EntryEditorPanel: "Auto-tag with AI" (≥50 chars, spinner, sparkles icon),
+  inline review panel (overall note, per-tag toggle + reasoning, Accept all /
+  Accept with edits / Reject all). Values copy only into Writing Move Tags
+  checkboxes; Save Entry still required for DB.
+- lib/entryTags.js: entryHasWritingTagsRow() for collapsed-card UI.
+- EntryCard: "Tagged" pill when a writing_tags row exists; amber "AI Flag"
+  when ai_flag is true (collapsed header).
+- ClassDataView: optional "Analyze untagged entries" batch (confirm, progress,
+  500 ms delay between API calls, upsertWritingTags per entry, refresh class
+  summary + untagged list).
+
+Tests / verification run for this audit
+---------------------------------------
+- npm run build (frontend) — success.
+- node scripts/phase6-parse-selftest.js — validates JSON fence + embedded-JSON
+  extraction logic aligned with routes/analyzeWriting.js.
+- require('./routes/analyzeWriting') — module loads (no live Claude/DB in CI).
+
+Bugs found and fixed (this audit)
+---------------------------------
+1) Fragile JSON parsing — Claude sometimes adds prose or code fences; plain
+   JSON.parse then failed. Fix: try parse; on failure, slice from first "{" to
+   last "}" and parse (still after optional ```json fence strip).
+
+2) Boolean coercion — model may return 1/0. Fix: normalizeBool accepts those.
+
+3) Reasoning / overall_note types — model might return non-strings. Fix: coerce
+   with String() and reject empty trimmed strings for required fields.
+
+4) Stale AI results — if the teacher edits the writing sample while a request is
+   in flight, the UI could show suggestions for the old text. Fix: capture
+   trimmed sample at request start; after await, compare to writingSampleRef
+   (kept in sync with the textarea) and discard results if they differ.
+
+Known limitations
+-----------------
+- Batch flow applies tags without per-entry review (by design); teachers should
+  spot-check entries afterward.
+- scripts/phase6-parse-selftest.js duplicates parse logic from the route file;
+  update both if parsing rules change.
+- Live Claude and PostgreSQL calls were not executed in this environment;
+  verify with ANTHROPIC_API_KEY and GET .../analyze-writing/test locally.

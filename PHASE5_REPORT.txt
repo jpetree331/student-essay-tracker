@@ -1,0 +1,93 @@
+Science Writing Tracker — Phase 5 Report
+========================================
+Date: 2026-03-20
+
+What was built (Phase 5)
+------------------------
+Data tab (main panel tab 3) with a secondary tab bar:
+
+1) Class View
+   - Horizontal bar chart (Recharts): writing-move tag frequencies, colors aligned
+     with roster tag pill palette (see frontend/src/lib/tagChartColors.js).
+   - Period filter dropdown (All Periods vs one class period) for the tag chart only.
+   - Line chart: average word count over calendar date, one series per period.
+   - Sortable per-period summary table (students, entries, avg word count, % for
+     each tag dimension).
+   - Export Class Data: CSV of the visible per-period summary table.
+   - Export Class CSV: one row per entry with student, assignment, unit, AKS,
+     date, word count, booleans, 200-char writing excerpt (UTF-8 BOM for Excel).
+
+2) Student View (sidebar student selection)
+   - Header with student name; empty state if no student selected.
+   - Word-count line chart over entry dates.
+   - Tag history table (checkmarks / dash for unset); expand row to show writing sample.
+   - Export Student Report (print-friendly HTML).
+
+3) Student record header
+   - Export Student Report using the same printable HTML as Data → Student View.
+
+Backend (existing routes extended)
+-----------------------------------
+File: routes/analytics.js
+- GET /api/analytics/class-summary
+  - Aggregates: totals, entries_this_week, periods[], tag_frequencies (all entries),
+    tag_frequencies_by_period, word_count_by_date (date + period + avg),
+    per_period (including tag % columns), entry_export_rows.
+- GET /api/analytics/student/:id
+  - student row (including iep_flags) + entries with assignment fields, tags,
+    and source_links (same shape as roster detail entries).
+
+Frontend files (principal)
+--------------------------
+- frontend/src/components/data/DataTab.jsx — Class / Student sub-tabs.
+- frontend/src/components/data/ClassDataView.jsx
+- frontend/src/components/data/StudentDataView.jsx
+- frontend/src/components/data/TagFrequencyBarChart.jsx
+- frontend/src/components/data/WordCountByPeriodChart.jsx
+- frontend/src/components/data/ChartSkeleton.jsx
+- frontend/src/lib/csv.js — CSV escaping + download helper.
+- frontend/src/lib/studentReportHtml.js — HTML report + open in new tab.
+- frontend/src/lib/tagChartColors.js
+- frontend/src/api/client.js — getClassSummary, getStudentAnalytics.
+- frontend/src/components/main/MainContent.jsx — mounts DataTab.
+- frontend/src/components/studentRecord/StudentRecordHeader.jsx — export button.
+
+Roster ClassSummaryDashboard still uses GET /api/analytics/class-summary; response
+remains backward compatible (tag_frequencies, per_period, totals).
+
+Bugs found and fixed (this audit)
+---------------------------------
+1) API resilience — class-summary assumed tagAll.rows[0], totals.rows[0], and
+   weekRows.rows[0] always existed. Fixed with defaults (zeros / empty tag object
+   merged with row) and optional chaining on total entry count.
+
+2) Date display timezone — pgDateToYmd() used Date.toISOString() (UTC), which could
+   shift the calendar day vs local intent for timestamp-like values. Fixed by
+   formatting local calendar Y-M-D when the value is a JavaScript Date.
+
+3) CSV robustness — fields containing tab characters were not quoted; Excel can
+   mis-split. Tabs are now treated like commas/newlines (field gets quoted).
+
+4) Printable report security / UX — source link hrefs accepted any URL string;
+   javascript: and similar could be risky in a generated page. Non-http(s)/mailto
+   URLs are now rendered as plain text with label, not as clickable links.
+
+5) Opening the report — document.write on a blank window can be fragile with
+   strict popup / noopener behavior. Switched to opening a blob: URL of the HTML
+   document and revoking the object URL after a delay so the tab keeps working
+   long enough to read or print.
+
+Known limitations (not changed)
+-------------------------------
+- Pop-up blockers can still block the report tab; UI alerts the user.
+- Student word chart: multiple entries on the same date appear as separate points
+  sharing one X tick (acceptable for a “trajectory” view).
+- Large class CSV payloads load entirely in memory (fine for local dev).
+
+Verification
+------------
+- npm run build (frontend) run after fixes — success.
+
+Remaining work
+--------------
+Two add-on phases are still planned per project roadmap (not part of this report).

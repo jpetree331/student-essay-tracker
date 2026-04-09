@@ -1,0 +1,100 @@
+Science Writing Tracker — Phase 3 Review Report
+=================================================
+Scope: Student record view (Roster tab when a student is selected), supporting
+API changes, and context helpers. Review date: code audit + fixes documented below.
+
+WHAT WAS BUILT IN PHASE 3
+-------------------------
+
+1) Backend (routes/students.js)
+   • GET /api/students/:id/entries — Returns each entry with assignment fields
+     (including assignment_aks_standard), writing_tags columns from a LEFT JOIN,
+     and source_links[] assembled via a follow-up query (ordered by entry_id, id).
+   • GET /api/students/:id — Embeds the same enriched shape in student.entries
+     so roster/detail payloads stay consistent.
+
+2) Frontend API (src/api/client.js)
+   • getStudentEntries(studentId)
+   • updateStudent(id, payload)
+   • upsertWritingTags(payload) → POST /api/writing-tags (server upsert)
+
+3) Global state (src/context/AppStateContext.jsx)
+   • refreshStudents() — Refetch sidebar list after student profile edits.
+   • refreshSelectedStudent() — Refetch selected student detail (existing).
+   • While detailLoading is true, student view shows loading (avoids flashing the
+     previous student’s header during id switches).
+
+4) Roster wiring (src/components/roster/RosterView.jsx)
+   • When selectedStudentId is set, renders StudentRecordView instead of the old
+     Phase 3 placeholder.
+
+5) Student record UI (src/components/studentRecord/)
+   • StudentRecordView.jsx — Fetches GET /api/students/:id/entries; sticky header +
+     progress strip; “New entry”; maps EntryCard; EntryFormPlaceholder for Prompt 4.
+   • StudentRecordHeader.jsx — “First Last” title, period pill, IEP line, Edit
+     (inline PUT /api/students/:id), Export disabled (Prompt 5).
+   • EntryProgressStrip.jsx — Horizontally scrollable chips (oldest→newest);
+     click scrolls to entry card and highlights active chip.
+   • EntryCard.jsx — Collapsible cards (expanded by default), tag pills, Sources,
+     writing sample + feedback sub-panels, live tag checkboxes → upsertWritingTags,
+     Edit entry → placeholder modal.
+   • TagChipsRow.jsx, LinkIcon.jsx — Presentation helpers.
+   • EntryFormPlaceholder.jsx — Stub dialog for Prompt 4 (new/edit).
+
+6) Utilities (src/lib/)
+   • dates.js — formatLongDate, formatChipDate (string YYYY-MM-DD + Date objects).
+   • text.js — abbreviateAssignment for chip subtitles.
+
+Layout: Full-width main content with comfortable horizontal padding only; no
+max-width layout wrapper on the record (per project rules). Tag saving uses the
+existing POST upsert (not PUT) to match the Express API.
+
+BUGS FOUND AND FIXED IN THIS REVIEW
+-----------------------------------
+
+1) Stale entries when switching students or on fetch failure
+   Problem: The entries array was not cleared when selectedStudentId changed, so
+   another student’s entries could briefly appear. On error, old rows could
+   remain visible.
+   Fix: Clear entries and error at the start of the fetch effect; on catch,
+     clear entries as well as setting entriesError.
+
+2) Card expand/collapse toggle with undefined state
+   Problem: Toggling used !prev[id], which treats undefined like “collapsed”
+     (because !undefined === true), inconsistent with UI default expanded when
+     cardExpanded[id] is missing.
+   Fix: Derive “was expanded” as prev[id] !== false, then flip to the opposite
+     boolean.
+
+3) Mismatch guard for student detail vs selected id
+   Problem: Rare race could show header data whose id did not match
+     selectedStudentId.
+   Fix: If student.id !== selectedStudentId, show a short loading state.
+
+4) Entry form placeholder UX / a11y
+   Problem: No Escape-to-close and background could still scroll while open.
+   Fix: keydown listener for Escape; body overflow hidden while open (restored on
+     close).
+
+5) Tag chips and strict booleans
+   Problem: Truthy non-boolean values from the wire could show chips incorrectly.
+   Fix: TagChipsRow only treats explicit true as on (isTrue helper).
+
+6) Date formatting robustness
+   Problem: If a driver ever returns a JavaScript Date for date_submitted,
+     string slicing would fail.
+   Fix: formatLongDate / formatChipDate accept Date instances with a sane fallback.
+
+FILES TOUCHED IN THIS REVIEW PASS
+---------------------------------
+• frontend/src/components/studentRecord/StudentRecordView.jsx
+• frontend/src/components/studentRecord/EntryFormPlaceholder.jsx
+• frontend/src/components/studentRecord/TagChipsRow.jsx
+• frontend/src/lib/dates.js
+• PHASE3_REVIEW_REPORT.txt (this file)
+
+KNOWN FOLLOW-UPS (OUT OF SCOPE)
+-------------------------------
+• Prompt 4: Real new/edit entry form and refresh entries after save.
+• Prompt 5: Export action behind the disabled header button.
+• Optional: focus trap in EntryFormPlaceholder; code-split Recharts elsewhere.

@@ -1,0 +1,99 @@
+Science Writing Tracker — Phase 2 Code Review Report
+====================================================
+Date: review pass over React frontend (frontend/) and related API usage.
+
+WHAT WAS BUILT (PHASE 2 — SUMMARY)
+-----------------------------------
+• Stack: Vite, React 18, Tailwind CSS, axios, Recharts; API base URL defaults to
+  http://localhost:3001 (override with VITE_API_URL).
+
+• Layout: Full-viewport shell; 56px dark header (“Science Writing Tracker”);
+  fixed 280px sidebar + flexible main; sidebar and main content scroll
+  independently; tab bar (Roster | Assignments | Data) under header within the
+  main column only.
+
+• Global state (React Context — src/context/AppStateContext.jsx):
+  - Students loaded once from GET /api/students
+  - Selected student id + detail from GET /api/students/:id (toggle click to clear)
+  - Period filter, search query, active tab
+
+• Sidebar: Period buttons (All + dynamic periods), live name search, students
+  grouped by period as “Last, First”.
+
+• Roster tab: Class summary from GET /api/analytics/class-summary when no
+  student is selected (metrics, Recharts bar chart of tag frequencies, per-period
+  table including avg word count). Student selected → placeholder for Prompt 3.
+
+• Assignments tab: Table from GET /api/assignments; slide-in panel for POST
+  /api/assignments (not a centered modal).
+
+• Data tab: Placeholder copy only (“Data dashboard — coming in Phase 2”).
+
+• Backend touchpoint: class-summary per_period includes avg_word_count; Express
+  default PORT documented as 3001 in .env.example (see root server).
+
+BUGS FOUND AND FIXED (THIS REVIEW)
+----------------------------------
+
+1) API error messages lost on HTTP errors (axios)
+   Problem: Failed requests (4xx/5xx) with JSON body { success, error } still
+   surfaced generic axios text (“Request failed with status code …”) instead of
+   the server’s error string.
+   Fix: Added an axios response interceptor in frontend/src/api/client.js to
+   reject with new Error(body.error) when the response JSON includes a string
+   error field.
+
+2) Assignment list refresh after save could “succeed” while data failed to reload
+   Problem: load() caught errors internally and never rethrew, so handleSaved
+   always closed the slide-in even when the list refresh failed.
+   Fix: load() now returns true/false; the panel closes only when refresh
+   succeeds. Errors continue to show in the Assignments tab error line.
+
+3) Stale setState after unmount (Assignments tab)
+   Problem: In-flight getAssignments could finish after leaving the tab,
+   triggering setState on an unmounted component.
+   Fix: mountedRef guards updates in load(); handleSaved only calls
+   setPanelOpen(false) if still mounted.
+
+4) Period filter strict equality vs string/number mismatch
+   Problem: If period ever arrived as a string from JSON while the filter used
+   numbers (or vice versa), the sidebar could hide all students incorrectly.
+   Fix: Sidebar filter compares Number(s.period) to Number(activePeriodFilter).
+
+5) Full-screen backdrop implemented as a <button>
+   Problem: A document-sized button is awkward for accessibility and could
+   participate in tab order in unwanted ways.
+   Fix: Replaced with a non-interactive div (role="presentation") that only
+   handles click-to-dismiss.
+
+6) Background scroll while slide-in is open
+   Problem: Main content could still scroll behind the overlay on long pages.
+   Fix: When the assignment panel opens, document.body overflow is set to hidden
+   and restored on close.
+
+7) Class summary render edge case
+   Problem: If loading finished with unexpected null/invalid payload, rendering
+   could throw accessing nested fields.
+   Fix: Guard after load — show a neutral “No summary data” message when data is
+   missing.
+
+8) “Most common gap” card misleading when multiple skills tie for lowest count
+   Problem: Only the first skill in the list was shown when counts were equal.
+   Fix: computeMostCommonGap now detects ties and shows a “Tied (lowest count)”
+   label with all tied skill names in the subtitle.
+
+FILES TOUCHED IN THIS REVIEW
+----------------------------
+• frontend/src/api/client.js
+• frontend/src/components/sidebar/Sidebar.jsx
+• frontend/src/components/assignments/AssignmentsView.jsx
+• frontend/src/components/assignments/AssignmentSlideIn.jsx
+• frontend/src/components/roster/ClassSummaryDashboard.jsx
+• PHASE2_REVIEW_REPORT.txt (this file)
+
+RECOMMENDED FOLLOW-UPS (NOT DONE HERE)
+--------------------------------------
+• Focus trap and initial focus in the assignment slide-in for full WCAG comfort.
+• Code-split Recharts to shrink the main bundle (build warning).
+• Optional: AbortController on assignment fetch to cancel in-flight requests
+  explicitly (mountedRef already prevents most stale updates).

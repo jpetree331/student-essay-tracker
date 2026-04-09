@@ -1,0 +1,17 @@
+node_modules/
+
+# Local secrets (allow committed template only)
+.env*
+!.env.example
+
+# Logs
+*.log
+
+# Build artifacts
+frontend/dist/
+
+# Docs (internal technical notes — not for VCS)
+docs/
+
+# Stray editor artifacts
+*.example.example

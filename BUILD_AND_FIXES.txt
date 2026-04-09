@@ -1,0 +1,65 @@
+Essay Organizer API — What Was Built (Review Summary)
+=====================================================
+Generated during a code review pass: bug fixes applied and documented below.
+
+WHAT WAS BUILT
+--------------
+Stack: Node.js, Express, pg (PostgreSQL), dotenv, cors, express-async-errors.
+
+Project layout:
+- server.js          — App entry: middleware, route mounts, 404, global error handler, /health
+- db.js              — Shared Pool + query() using DATABASE_URL
+- lib/words.js       — word_count from trimmed whitespace split
+- lib/boolean.js     — Safe boolean coercion for JSON bodies (added in review)
+- middleware/responses.js — ok() / fail() → { success, data, error }
+- middleware/errorHandler.js — JSON errors; PostgreSQL-aware handling (extended in review)
+- routes/students.js, assignments.js, entries.js, sourceLinks.js, writingTags.js, analytics.js
+
+Database (schema.sql):
+- students, assignments, entries, source_links, writing_tags
+- Foreign keys, indexes, CASCADE deletes where appropriate; assignments protected by ON DELETE RESTRICT on entries
+- writing_tags.entry_id UNIQUE for upsert by entry
+
+Seed (seed.sql):
+- Truncate + 15 students (3 periods × 5), 2 assignments, 30 entries, source links, writing_tags
+
+REST API (all JSON shape { success, data, error }):
+- Students: GET list, GET by id (with entries), GET :id/entries, POST, PUT, DELETE
+- Assignments: GET list, GET by id, POST, PUT
+- Entries: GET by id (+ source_links, writing_tags), POST/PUT (word_count auto), DELETE
+- Source links: POST, DELETE
+- Writing tags: POST upsert on entry_id
+- Analytics: GET class-summary, GET student/:id timeline metrics
+
+BUGS FOUND AND FIXED (THIS REVIEW)
+----------------------------------
+1) Writing tags upsert (POST /api/writing-tags)
+   Problem: Omitted boolean fields were sent as Boolean(undefined) → false, wiping existing
+   tags on partial updates.
+   Fix: Load existing row when present; merge so only provided body fields override;
+   new entries still default omitted booleans to false. Notes: omit preserves prior value;
+   explicit null clears/sets per body. HTTP 201 on first create, 200 on update.
+
+2) Boolean coercion for flags (entries + tags)
+   Problem: Boolean("false") is true in JavaScript; string or 0/1 from loose clients could
+   mis-store flagged_for_followup and tag booleans.
+   Fix: lib/boolean.js — parseBooleanValue() and optionalBoolean(); used on entry create/update
+   and tag merge paths.
+
+3) Analytics “entries this week” (GET /api/analytics/class-summary)
+   Problem: date_submitted >= CURRENT_DATE - 7 days through CURRENT_DATE spans 8 calendar days.
+   Fix: Use INTERVAL '6 days' for an inclusive 7-day window ending today (rolling week).
+
+4) PostgreSQL errors surfaced as generic 500
+   Problem: FK violations (e.g. invalid student_id on entry create), unique violations, and
+   invalid input often produced unclear or overly generic responses.
+   Fix: errorHandler maps 23503 → 400, 23505 → 409, 22P02 → 400; in development, detail/message
+   from the driver is returned when helpful.
+
+No changes were made to schema.sql or seed.sql in this review pass.
+
+HOW TO RUN (REMINDER)
+---------------------
+1. Create DB, run schema.sql then seed.sql
+2. Copy .env.example to .env; set DATABASE_URL
+3. npm install && npm start (or npm run dev)

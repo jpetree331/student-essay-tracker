@@ -1,0 +1,104 @@
+Science Writing Tracker — Phase 4 Report
+========================================
+Generated: 2026-03-20
+
+Overview
+--------
+Phase 4 implements the New Entry / Edit Entry experience on the student record:
+a 520px fixed slide-in panel from the right (no modal scrim), main content shifts
+with margin-right, nested "New Assignment" panel to the left of the entry panel,
+full form fields, validation, save orchestration against the existing API, dirty
+close confirmation, and post-save list refresh + scroll-to-card.
+
+Primary files
+-------------
+- frontend/src/components/studentRecord/EntryEditorPanel.jsx
+  Main form: assignments, date, dynamic source links, writing sample + word
+  count, feedback, teacher notes, writing tags, follow-up flag, save/cancel.
+
+- frontend/src/components/studentRecord/StudentRecordView.jsx
+  Wires "New entry" and EntryCard "Edit" to the panel; applies mr-[520px] when
+  open; reloads entries and scrolls to saved entry after onSaved.
+
+- frontend/src/components/assignments/AssignmentSlideIn.jsx
+  Optional `nested` mode: no backdrop, fixed at right-[520px], no body scroll
+  lock; used from the entry editor for "+ New Assignment".
+
+- frontend/src/api/client.js
+  getEntry, createEntry, updateEntry, createSourceLink, deleteSourceLink (and
+  existing getAssignments, upsertWritingTags).
+
+- frontend/src/lib/words.js
+  wordCount() aligned with server trimming / whitespace split.
+
+API usage (unchanged backend)
+-----------------------------
+- GET  /api/assignments — populate assignment dropdown
+- GET  /api/entries/:id — load entry for edit (includes source_links, writing_tags)
+- POST /api/entries — create (requires student_id, assignment_id, date_submitted, …)
+- PUT  /api/entries/:id — update
+- POST /api/source-links — add each source row after replacing existing links
+- DELETE /api/source-links/:id — remove links (see save strategy below)
+- POST /api/writing-tags — upsert tag booleans for entry_id
+
+Save strategy (source links)
+----------------------------
+After create or update entry, the client calls GET /api/entries/:id, deletes
+every returned source link id, then POSTs each non-empty label+URL row from the
+form. This matches the product rule (replace links with current form state) and
+fixes retry after a partial save (see bugs fixed).
+
+Bugs found and fixed (this pass)
+--------------------------------
+1. Duplicate entries on "New" save retry
+   If createEntry succeeded but a later step failed, editingEntryIdRef was set
+   but the next Save still took the "new" branch and called createEntry again.
+   Fix: second and later saves for mode "new" use updateEntry when ref already
+   holds an entry id.
+
+2. Stale / wrong source links on new-entry retry
+   loadedLinkIdsRef was only populated when loading an entry for edit. After a
+   partial new save, some links could exist in the DB but were not deleted on
+   retry. Fix: always refresh link ids via getEntry(entryId) before delete +
+   recreate.
+
+3. Edit form dirty baseline with null date_submitted
+   initialSnapshot used String(full.date_submitted).slice(0, 10), which becomes
+   "null" when the value is null. Fix: normalize with the same rule as the date
+   input (fallback to todayLocal()).
+
+4. Nested assignment save + refresh
+   handleNestedAssignmentSaved could throw if getAssignments failed after a
+   successful createAssignment. Fix: try/catch; still select created id and close
+   nested panel.
+
+5. Assignment not in dropdown (id type / timing)
+   selectedAssignment used strict a.id === id; widened to Number(a.id) === id.
+   Added editAssignmentFallback from loaded entry (name/unit/AKS) plus a
+   temporary <option> when the assignment list does not yet include that id;
+   effect clears fallback once the assignment appears in GET /api/assignments.
+
+6. Student safety
+   EntryEditorPanel returns null if open but student?.id is missing.
+
+7. Writing sample textarea growth
+   Added rows={8} and Tailwind [field-sizing:content] where supported, keeping
+   min-height 200px and resize-y.
+
+8. Changing student while form open
+   StudentRecordView now closes the entry panel when selectedStudentId changes
+   to avoid saving against the wrong student or showing stale data.
+
+Known limitations / follow-ups
+------------------------------
+- Saves are not transactional: if the server succeeds on entry but fails on
+  links or tags, the user may need to save again; the new link-replace strategy
+  makes retry consistent.
+- Nested assignment panel (400px) can overlap the left-shifted main content;
+  only the 520px entry panel margin is applied at the layout level.
+- field-sizing: content is not supported in all browsers; textarea still has
+  min-height and manual resize.
+
+Verification
+------------
+- npm run build (frontend) — success after changes.
