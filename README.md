@@ -1,22 +1,64 @@
-# Science Writing Tracker (Essay Organizer)
+# Science Writing Tracker
 
-Local full-stack app: Express API + PostgreSQL + React (Vite) UI.
+A classroom tool that helps special education teachers collect student writing samples, automatically identify argumentative writing moves using AI, and track growth over time.
 
-## Setup
+Built for a 9th-grade resource biology classroom where students respond to IRR (Integrated Reading and Reasoning) prompts. The AI analysis is calibrated for special education contexts — it surfaces genuine, incremental growth rather than measuring against grade-level benchmarks.
 
-1. Install API dependencies: `npm install` (repo root).
-2. Install UI dependencies: `cd frontend && npm install`.
-3. Copy `.env.example` to `.env` and configure `DATABASE_URL` (and `PORT` if needed; default API port is **3010**). Copy `frontend/.env.example` to `frontend/.env` so the UI points at the API, or rely on the same default port in code.
-4. Run the API: `npm run dev` or `npm start`.
-5. Run the UI: `cd frontend && npm run dev`.
+## What It Does
 
-## LLM auto-tagging
+**Organize** — Store student writing samples by assignment, class period, and date. Attach source documents, teacher notes, and student feedback to each entry.
 
-Phase 6 — LLM auto-tagging requires an Anthropic API key. Add `ANTHROPIC_API_KEY` to your `.env` file. The app runs without this key — auto-tagging will simply be unavailable if the key is missing (the API returns a clear error).
+**Auto-Tag Writing Moves** — Send a writing sample to Claude and get back structured tags: claim present, evidence cited, explanation given, source named, response incomplete, and an AI-writing flag. Tags can also be set manually.
 
-- Single-entry review: **Data** tab is unchanged for this; use **Roster → student → New/Edit entry** and **Auto-tag with AI** under the writing sample.
-- Optional batch: **Data → Class View → Analyze untagged entries** (only shown when entries exist without a `writing_tags` row and sample length ≥ 50).
+**Track Progress** — Select 2–6 entries from a student and generate a longitudinal comparison report. The report identifies specific growth moments with quoted evidence, persistent gaps, a prioritized next instructional step, and a ready-to-use conference script.
 
-### Development-only test route
+**Visualize** — Class-wide and per-student dashboards show tag frequency, word count trends, and submission timelines.
 
-`GET /api/analyze-writing/test` is registered when `NODE_ENV` is not `production`. It calls Claude with a fixed snippet so you can verify connectivity without the UI. **Disable production deploys with `NODE_ENV=production`**, or remove that route before shipping.
+**Export** — Print-ready student reports, assignment submission sheets, comparison reports, and CSV data export.
+
+## Tech Stack
+
+- **Backend:** Node.js, Express, PostgreSQL
+- **Frontend:** React 18, Vite, Tailwind CSS, Recharts
+- **AI:** Anthropic Claude API (Haiku for tagging, Sonnet for progress comparison)
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/jpetree331/student-essay-tracker.git
+cd student-essay-tracker
+npm install
+cd frontend && npm install && cd ..
+
+# Configure
+cp .env.example .env        # Set DATABASE_URL (required), ANTHROPIC_API_KEY (optional)
+cp frontend/.env.example frontend/.env
+
+# Set up database
+psql -f schema.sql
+npm run db:migrate
+
+# Run
+npm run dev          # API on :3010
+cd frontend && npm run dev   # UI on Vite's default port
+```
+
+AI features (auto-tagging and progress comparison) require an Anthropic API key. The app runs fine without one — those features just won't be available.
+
+## Design Notes
+
+- **No auth layer.** This is a local classroom tool, not a hosted service. Run it on your machine or behind a reverse proxy.
+- **IEP-aware AI prompts.** The progress comparison prompt is written for students who may have IEPs and histories of being told their writing isn't good enough. It finds real growth first, then identifies gaps constructively.
+- **Server-computed word counts.** The backend always calculates word count on save — the frontend never sends one.
+- **Defensive JSON parsing.** The AI integration doesn't assume Claude returns perfectly bare JSON. A shared parser handles fences, prefixes, and minor output variation across model versions.
+
+## Project Context
+
+I'm a special education biology teacher. I built this because I needed a way to track whether my students' argumentative writing was actually improving across assignments — not just whether they turned something in. Commercial tools either don't handle science writing moves specifically or aren't designed with SpEd students in mind.
+
+This is a working tool I use in my classroom, not a polished SaaS product.
+
+## License
+
+MIT
