@@ -1,45 +1,23 @@
 /**
- * LLM auto-tagging (Phase 6). Uses Anthropic Claude API.
+ * LLM auto-tagging (Phase 6). Uses the configured AI provider (Anthropic or OpenAI).
  *
  * PRODUCTION: Do not expose GET /test in production. It is registered only when
  * NODE_ENV !== "production". Remove or set NODE_ENV=production before deploy.
  */
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const db = require('../db');
 const { parseModelJson } = require('../lib/claudeJson');
+const { resolveProvider } = require('../lib/ai/provider');
 const { ok, fail } = require('../middleware/responses');
 
 const router = express.Router();
 
-const MODEL = 'claude-haiku-4-5-20251001';
-
-const SYSTEM_PROMPT = `You are an expert special education science writing coach analyzing 9th grade biology student writing samples. Your job is to identify which writing moves are present in a student's response.
-
-Analyze the writing sample and return ONLY a JSON object with no other text, no markdown, no explanation outside the JSON. The JSON must have exactly this structure:
-
-{
-  "claim_present": true or false,
-  "claim_reasoning": "one sentence explaining why you marked this true or false",
-  "evidence_cited": true or false,
-  "evidence_reasoning": "one sentence explaining why",
-  "explanation_present": true or false,
-  "explanation_reasoning": "one sentence explaining why",
-  "source_named": true or false,
-  "source_named_reasoning": "one sentence explaining why",
-  "response_incomplete": true or false,
-  "response_incomplete_reasoning": "one sentence explaining why",
-  "ai_flag": true or false,
-  "ai_flag_reasoning": "one sentence explaining why — flag if writing is unusually polished, uses technical vocabulary not present in typical 9th grade IRR writing, has no spelling or grammatical errors, or contains terminology unlikely to appear in provided source materials",
-  "overall_note": "2-3 sentences max summarizing the student's current writing level and the single most important next step"
-}
-
-Definitions for your analysis:
-- claim_present: The writing contains a clear argumentative statement about what the evidence proves, not just a description of facts
-- evidence_cited: The writing references specific data, numbers, or named sources (e.g. 'According to Source 1', 'the graph shows 78%')
-- explanation_present: The writing explains WHY the evidence supports the claim — not just what happened but what it means
-- source_named: The writing explicitly names or labels a source (Source 1, Source 2, the graph, the article, etc.)
-- response_incomplete: The writing appears cut off mid-sentence, answers only part of the prompt, or is too brief to constitute an attempt
-- ai_flag: The writing contains signals inconsistent with authentic 9th grade IRR student writing`;
+// Shared with the desktop (Rust) build — keep prompt text in prompts/, not inline.
+const SYSTEM_PROMPT = fs
+  .readFileSync(path.join(__dirname, '../prompts/analyze-writing.system.txt'), 'utf8')
+  .trim();
 
 const TAG_KEYS = [
   'claim_present',
@@ -90,16 +68,8 @@ function validateAndShapeSuggestions(raw) {
   return out;
 }
 
-async function callClaude(writingSample, assignmentContext) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || !String(apiKey).trim()) {
-    const err = new Error('ANTHROPIC_API_KEY is not configured');
-    err.statusCode = 503;
-    throw err;
-  }
-
-  const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey: String(apiKey).trim() });
+async function runAnalysis(writingSample, assignmentContext) {
+  const provider = resolveProvider();
 
   const ctx =
     assignmentContext != null && String(assignmentContext).trim()
@@ -113,23 +83,15 @@ ${writingSample}
 
 Analyze this writing sample and return the JSON object.`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
+  const { text, modelUsed, provider: providerUsed, usage } = await provider.complete({
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
+    user: userMessage,
+    kind: 'tag',
   });
-
-  const blocks = message.content || [];
-  const text = blocks
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
-    .trim();
 
   const raw = parseModelJson(text);
   const suggestions = validateAndShapeSuggestions(raw);
-  return { suggestions, message };
+  return { suggestions, modelUsed, providerUsed, usage };
 }
 
 router.post('/', async (req, res) => {
@@ -142,10 +104,11 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const { suggestions } = await callClaude(sample, assignment_context);
+    const { suggestions, modelUsed, providerUsed } = await runAnalysis(sample, assignment_context);
     return ok(res, {
       suggestions,
-      model_used: MODEL,
+      model_used: modelUsed,
+      provider_used: providerUsed,
       analyzed_at: new Date().toISOString(),
     });
   } catch (e) {
@@ -198,13 +161,16 @@ if (process.env.NODE_ENV !== 'production') {
     const snippet = `According to Source 1, the moth population changed by 78% over time. This proves that natural selection caused the darker moths to survive better because the trees became polluted and darker moths blended in.`;
 
     try {
-      const { suggestions, message } = await callClaude(snippet, 'Unit 3 — Evolution (sample test)');
+      const { suggestions, modelUsed, providerUsed, usage } = await runAnalysis(
+        snippet,
+        'Unit 3 — Evolution (sample test)'
+      );
       return ok(res, {
         test_snippet: snippet,
         suggestions,
-        model_used: MODEL,
-        raw_stop_reason: message.stop_reason,
-        usage: message.usage,
+        model_used: modelUsed,
+        provider_used: providerUsed,
+        usage,
         analyzed_at: new Date().toISOString(),
       });
     } catch (e) {

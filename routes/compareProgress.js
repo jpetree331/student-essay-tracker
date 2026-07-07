@@ -1,56 +1,17 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const db = require('../db');
 const { parseModelJson } = require('../lib/claudeJson');
+const { resolveProvider } = require('../lib/ai/provider');
 const { ok, fail } = require('../middleware/responses');
 
 const router = express.Router();
 
-const MODEL = process.env.ANTHROPIC_COMPARE_MODEL || 'claude-sonnet-4-6';
-
-const SYSTEM_PROMPT = `You are an expert special education science writing coach analyzing the writing development of a 9th grade biology student in a resource (IRR) class. You are reviewing multiple writing samples from the same student taken at different points in time.
-
-Your job is to identify genuine growth, persistent gaps, and the most actionable next instructional step for this specific student. You know this student may have IEP goals related to written expression, reading comprehension, or executive function. Your tone is always warm, specific, and evidence-based — you name exact things from the writing, you do not generalize.
-
-Return ONLY a JSON object with no other text, no markdown, no explanation outside the JSON. The structure must be exactly:
-
-{
-  "overall_growth_summary": "A 3-4 sentence summary of how this student has grown as a writer across these samples. Be specific — name exact moves they have added, exact vocabulary that has appeared, exact structural changes. Do not be vague.",
-  "what_stayed_strong": "One to two sentences naming something this student did consistently well across ALL samples. Find the through-line of their strength.",
-  "growth_moments": [
-    {
-      "from_entry": <number, entry_id of earlier entry>,
-      "to_entry": <number, entry_id of later entry>,
-      "what_changed": "Specific description of one writing move that appeared or improved between these two entries",
-      "evidence": "Direct quote or close paraphrase from the later entry that demonstrates this growth"
-    }
-  ],
-  "persistent_gaps": [
-    {
-      "gap_name": "short label e.g. Evidence citation",
-      "description": "One sentence describing what is still missing and why it matters for argument writing",
-      "present_in_entries": [<array of entry_ids where this gap appears>]
-    }
-  ],
-  "next_instructional_step": {
-    "move": "The single most important writing move to teach this student next — be specific, not generic",
-    "rationale": "One sentence explaining why this is the right next step given the growth pattern",
-    "try_this": "A concrete sentence stem or micro-strategy the teacher can give directly to the student at their next conference. Write it as if speaking to the student.",
-    "iep_connection": "If IEP flags were provided, one sentence connecting this next step to the relevant IEP goal. If no IEP flags were provided, use null."
-  },
-  "entry_by_entry": [
-    {
-      "entry_id": <number>,
-      "date": "date string",
-      "assignment_name": "name",
-      "one_line_summary": "One sentence capturing where this student was as a writer at this moment in time",
-      "strongest_moment": "The best sentence or phrase from this specific sample — direct quote",
-      "biggest_opportunity": "The one thing that would have made this specific sample stronger"
-    }
-  ],
-  "conference_script": "A short paragraph (5-7 sentences) the teacher could actually say out loud to this student when returning their work. Written in second person directly to the student. Warm, specific, honest. Names their growth explicitly. Ends with one concrete challenge for next time. Appropriate for a 9th grade reading level."
-}
-
-Remember: this student is in a special education resource class. Many of these students have been told their writing is bad for years. Your analysis must find and name real growth even when progress is small. Small growth is still growth and it matters.`;
+// Shared with the desktop (Rust) build — keep prompt text in prompts/, not inline.
+const SYSTEM_PROMPT = fs
+  .readFileSync(path.join(__dirname, '../prompts/compare-progress.system.txt'), 'utf8')
+  .trim();
 
 function tagYesNo(v) {
   return v === true ? 'yes' : 'no';
@@ -99,27 +60,13 @@ function normalizeComparison(raw) {
   return c;
 }
 
-async function callCompareClaude(userMessage) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || !String(apiKey).trim()) {
-    const err = new Error('ANTHROPIC_API_KEY is not configured');
-    err.statusCode = 503;
-    throw err;
-  }
-  const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey: String(apiKey).trim() });
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
+async function runComparison(userMessage) {
+  const provider = resolveProvider();
+  const { text, modelUsed, provider: providerUsed } = await provider.complete({
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
+    user: userMessage,
+    kind: 'compare',
   });
-  const blocks = message.content || [];
-  const text = blocks
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
-    .trim();
   let raw;
   try {
     raw = parseModelJson(text);
@@ -127,7 +74,7 @@ async function callCompareClaude(userMessage) {
     console.error('[compare-progress] JSON parse failed. Raw model text (truncated):', text.slice(0, 4000));
     throw new Error(`Could not parse comparison response: ${e.message}`);
   }
-  return { comparison: normalizeComparison(raw), message, rawText: text };
+  return { comparison: normalizeComparison(raw), modelUsed, providerUsed };
 }
 
 router.post('/', async (req, res) => {
@@ -190,13 +137,14 @@ router.post('/', async (req, res) => {
   const userMessage = buildUserMessage(studentName, iepFlags, entries);
 
   try {
-    const { comparison } = await callCompareClaude(userMessage);
+    const { comparison, modelUsed, providerUsed } = await runComparison(userMessage);
     return ok(res, {
       comparison,
       student_id: studentId,
       entry_ids_compared: entryIds,
       generated_at: new Date().toISOString(),
-      model_used: MODEL,
+      model_used: modelUsed,
+      provider_used: providerUsed,
     });
   } catch (e) {
     const rawStatus = e.statusCode ?? (typeof e.status === 'number' ? e.status : null);
