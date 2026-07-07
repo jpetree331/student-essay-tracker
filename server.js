@@ -41,6 +41,12 @@ app.use((req, res) => {
 
 app.use(errorHandler);
 
-app.listen(PORT, () => {
-  console.log(`Essay organizer API listening on http://localhost:${PORT}`);
-});
+// Export the app so it can be used as a serverless handler (e.g. Vercel via api/index.js).
+// Only start a long-running listener when this file is executed directly (local dev / `npm start`).
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Essay organizer API listening on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
