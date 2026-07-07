@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:3010';
+// Inside the Tauri desktop shell, the Rust side injects the loopback port of
+// its embedded API server before the page loads (see desktop/src-tauri/src/main.rs).
+const tauriPort = typeof window !== 'undefined' ? window.__TAURI_API_PORT__ : undefined;
+export const isDesktop = tauriPort != null;
+
+// In production (e.g. Vercel) the API is served from the same origin under /api,
+// so an empty baseURL is correct. In local dev the API runs on a separate port.
+// An explicit VITE_API_URL always wins (even an empty string).
+const baseURL = isDesktop
+  ? `http://127.0.0.1:${tauriPort}`
+  : (import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? '' : 'http://localhost:3010'));
 
 export const api = axios.create({
   baseURL,
@@ -138,5 +148,27 @@ export async function getStudentComparisons(studentId) {
 
 export async function saveComparison(payload) {
   const res = await api.post('/api/comparisons', payload);
+  return unwrap(res);
+}
+
+// Desktop-only (Tauri): toggle between real data and a sample demo dataset.
+export async function getDemoMode() {
+  const res = await api.get('/api/demo-mode');
+  return unwrap(res);
+}
+
+export async function setDemoMode(enabled) {
+  const res = await api.put('/api/demo-mode', { enabled });
+  return unwrap(res);
+}
+
+// Desktop-only (Tauri): AI provider + API key settings, stored locally.
+export async function getSettings() {
+  const res = await api.get('/api/settings');
+  return unwrap(res);
+}
+
+export async function updateSettings(payload) {
+  const res = await api.put('/api/settings', payload);
   return unwrap(res);
 }
